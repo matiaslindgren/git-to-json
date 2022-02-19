@@ -6,11 +6,12 @@ use std::str::FromStr;
 
 fn main() -> Result<(), String> {
     let stdin = fs::read_to_string("/dev/stdin").unwrap();
-    let commits = stdin
+    let commits: Result<Vec<Commit<u32>>, _> = stdin
         .split(0 as char)
         .filter(|l| !l.trim().is_empty())
         .map(str::parse::<Commit<u32>>)
-        .collect::<Result<Vec<Commit<u32>>, _>>()?;
+        .collect();
+    let commits = commits?;
     println!("{}", commits_to_csv(&commits, ","));
     println!("{}", commits[0].script_create_table("mytable"));
     Ok(())
@@ -72,12 +73,12 @@ where
 {
     captures
         .and_then(|captures| captures.get(1))
-        .and_then(|group| {
+        .map(|group| {
             let num = group.as_str();
             let num = num.parse::<DiffSize>();
-            Some(num.expect("failed to parse number"))
+            num.expect("failed to parse number")
         })
-        .unwrap_or(DiffSize::default())
+        .unwrap_or_default()
 }
 
 type Field = &'static str;
@@ -153,9 +154,8 @@ where
     } else {
         commits.first().unwrap().schema()
     };
-    let header: Vec<&str> =
-        schema.iter().map(|(name, _)| name).cloned().collect();
-    let header = (&header[..]).join(sep);
+    let header: Vec<&str> = schema.into_iter().map(|(name, _)| name).collect();
+    let header = header[..].join(sep);
     let mut lines: Vec<String> = commits
         .iter()
         .map(|c| {
@@ -168,7 +168,7 @@ where
                 format!("{}", c.insertions),
                 format!("{}", c.deletions),
             ];
-            (&line[..]).join(sep)
+            line[..].join(sep)
         })
         .collect();
     lines.insert(0, header);
