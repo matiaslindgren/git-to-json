@@ -1,50 +1,69 @@
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
-use std::{env, fmt, path, process, str};
+use std::io::BufRead;
+use std::{env, fmt, io, path, process, str};
 
 const USAGE: &'static str = concat!(
-    "usage: extract_git_log repository_path { csv | json | postgres }",
+    "usage: extract_git_log repository_path { csv | json | postgres } n",
 );
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
+    if args.len() != 4 {
         return Err(USAGE.to_string());
     }
-    let commits = collect_git_log(&args[1])?;
-    let output = match args[2].as_str() {
-        "csv" => Ok(commits_to_csv(&commits, ",")),
-        "json" => Ok(commits_to_json(&commits)),
-        "postgres" => Ok(commits_to_postgres(&commits, "git_commits")),
-        x => Err(format!("unknown output specified {}", x)),
+    let repository = path::Path::new(&args[1]);
+    if !repository.exists() {
+        return Err(format!(
+            "repository '{}' does not exist",
+            repository.display()
+        ));
+    }
+    let reader = commit_reader::<u32>(&repository)?;
+    let n = args[3].parse::<usize>().expect("failed parsing n");
+
+    let reader = reader.take(n);
+    match args[2].as_str() {
+        "csv" => print_csv(reader, ","),
+        // "json" => Ok(commits_to_json(reader)),
+        // "postgres" => Ok(commits_to_postgres(reader, "git_commits")),
+        x => {
+            return Err(format!("unknown output specified {}\n{}", x, USAGE));
+        }
     };
-    let output = output?;
-    println!("{}", output);
     Ok(())
 }
 
-fn collect_git_log(repository: &str) -> Result<Vec<Commit<u32>>, String> {
-    if !path::Path::new(repository).exists() {
-        return Err(format!("repository '{}' does not exist", repository));
-    }
-    let output = process::Command::new("git")
+fn commit_reader<DiffSize>(
+    repository: &path::Path,
+) -> Result<impl Iterator<Item = Commit<DiffSize>>, String>
+where
+    DiffSize: str::FromStr + fmt::Display + Default + PostgresType,
+    <DiffSize as str::FromStr>::Err: fmt::Debug,
+{
+    let git_log = process::Command::new("git")
         .arg("-C")
         .arg(repository)
         .arg("log")
         .arg("--pretty=format:%x00%H %aI %ae %cI")
         .arg("--shortstat")
-        .output()
-        .expect("failed to run git");
-    let stdout =
-        str::from_utf8(&output.stdout[..]).expect("failed to collect stdout");
-    stdout
-        .split(0 as char)
-        .map(str::trim)
+        .stdout(process::Stdio::piped())
+        .spawn();
+    let mut git_log = git_log.expect("spawn error");
+    let stdout = git_log.stdout.take().expect("stdout error");
+    //TODO stop gracefully on SIGPIPE, e.g.
+    // ./log2csv repo csv 1000000 | head -n 10
+    Ok(io::BufReader::new(stdout)
+        .split(0u8)
+        .map(|res| res.expect("buf read error"))
+        .map(|buf| String::from_utf8_lossy(&buf).trim().to_string())
         .filter(|section| !section.is_empty())
-        .map(str::parse::<Commit<u32>>)
-        .collect()
+        .map(|section| {
+            section
+                .parse::<Commit<DiffSize>>()
+                .expect("failed parsing section")
+        }))
 }
-
 lazy_static! {
     static ref RE_CHANGES: Regex = Regex::new(r"(\d+) files? changed").unwrap();
     static ref RE_INSERTIONS: Regex = Regex::new(r"(\d+) insertions?").unwrap();
@@ -186,6 +205,32 @@ trait PostgresSchema {
     fn script_create_table(&self, table_name: &str) -> String;
 }
 
+fn print_csv<DiffSize>(
+    reader: impl Iterator<Item = Commit<DiffSize>>,
+    sep: &str,
+) where
+    DiffSize: str::FromStr + fmt::Display + Default + PostgresType,
+    <DiffSize as str::FromStr>::Err: fmt::Debug,
+{
+    let header = Commit::<DiffSize>::default().field_names();
+    println!("{}", header[..].join(sep));
+    let csv_lines = reader.map(|c| {
+        let line = vec![
+            format!("{}", c.hash),
+            format!("{}", c.author_date),
+            format!("{}", c.author_email),
+            format!("{}", c.commit_date),
+            format!("{}", c.files_changed),
+            format!("{}", c.insertions),
+            format!("{}", c.deletions),
+        ];
+        line[..].join(sep)
+    });
+    for line in csv_lines.into_iter() {
+        println!("{}", line);
+    }
+}
+
 impl<DiffSize> PostgresSchema for Commit<DiffSize>
 where
     DiffSize: PostgresType,
@@ -239,70 +284,46 @@ where
     }
 }
 
-fn commits_to_json<DiffSize>(commits: &[Commit<DiffSize>]) -> String
-where
-    DiffSize: serde::Serialize,
-{
-    serde_json::to_string_pretty(commits)
-        .expect("failed converting commits to json")
-}
+// fn commits_to_json<DiffSize>(commits: &[Commit<DiffSize>]) -> String
+// where
+//     DiffSize: serde::Serialize,
+// {
+//     serde_json::to_string_pretty(commits)
+//         .expect("failed converting commits to json")
+// }
 
-fn commits_to_csv<DiffSize>(commits: &[Commit<DiffSize>], sep: &str) -> String
-where
-    DiffSize: fmt::Display + Default + PostgresType,
-{
-    let header = Commit::<DiffSize>::default().field_names();
-    let mut lines: Vec<String> = commits
-        .iter()
-        .map(|c| {
-            let line = vec![
-                format!("{}", c.hash),
-                format!("{}", c.author_date),
-                format!("{}", c.author_email),
-                format!("{}", c.commit_date),
-                format!("{}", c.files_changed),
-                format!("{}", c.insertions),
-                format!("{}", c.deletions),
-            ];
-            line[..].join(sep)
-        })
-        .collect();
-    lines.insert(0, header[..].join(sep));
-    lines.join("\n")
-}
-
-fn commits_to_postgres<DiffSize>(
-    commits: &[Commit<DiffSize>],
-    table_name: &str,
-) -> String
-where
-    DiffSize: fmt::Display + Default + PostgresType,
-{
-    let columns: Vec<&str> = Commit::<DiffSize>::default().field_names();
-    let mut lines: Vec<String> = commits
-        .iter()
-        .map(|c| {
-            let values = format!(
-                "('{}', '{}', '{}', '{}', {}, {}, {})",
-                c.hash,
-                c.author_date,
-                c.author_email,
-                c.commit_date,
-                c.files_changed,
-                c.insertions,
-                c.deletions,
-            );
-            format!(
-                "insert into {} ({})\n  values {};",
-                table_name,
-                columns[..].join(", "),
-                values,
-            )
-        })
-        .collect();
-    lines.insert(
-        0,
-        Commit::<DiffSize>::default().script_create_table(table_name),
-    );
-    lines.join("\n")
-}
+// fn commits_to_postgres<DiffSize>(
+//     commits: &[Commit<DiffSize>],
+//     table_name: &str,
+// ) -> String
+// where
+//     DiffSize: fmt::Display + Default + PostgresType,
+// {
+//     let columns: Vec<&str> = Commit::<DiffSize>::default().field_names();
+//     let mut lines: Vec<String> = commits
+//         .iter()
+//         .map(|c| {
+//             let values = format!(
+//                 "('{}', '{}', '{}', '{}', {}, {}, {})",
+//                 c.hash,
+//                 c.author_date,
+//                 c.author_email,
+//                 c.commit_date,
+//                 c.files_changed,
+//                 c.insertions,
+//                 c.deletions,
+//             );
+//             format!(
+//                 "insert into {} ({})\n  values {};",
+//                 table_name,
+//                 columns[..].join(", "),
+//                 values,
+//             )
+//         })
+//         .collect();
+//     lines.insert(
+//         0,
+//         Commit::<DiffSize>::default().script_create_table(table_name),
+//     );
+//     lines.join("\n")
+// }
