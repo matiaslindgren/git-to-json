@@ -230,7 +230,7 @@ impl PostgresSchema for Commit {
             })
             .collect();
         format!(
-            "create table {} (\n{}\n);",
+            "create table if not exists {} (\n{}\n);",
             table_name,
             lines[..].join(",\n")
         )
