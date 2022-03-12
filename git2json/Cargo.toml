@@ -1,5 +1,5 @@
 [package]
-name = "log2csv"
+name = "git2json"
 version = "0.1.0"
 edition = "2021"
 

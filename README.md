@@ -1,14 +1,14 @@
-# stack-of-git
+# git to JSON
 
-Convert git commit data from `git log` lines to csv/json/postgres.
+Convert git commit data from `git log` lines to json/csv/postgres.
 
 ## Usage
 
 ```bash
-cd ./log2csv
+cd ./git2json
 cargo build --release
 
-./target/release/log2csv /path/to/repository csv > commits.csv
-./target/release/log2csv /path/to/repository json > commits.json
-./target/release/log2csv /path/to/repository postgres > create_commits.sql
+./target/release/git2json /path/to/repository json > commits.json
+./target/release/git2json /path/to/repository csv > commits.csv
+./target/release/git2json /path/to/repository postgres > create_commits.sql
 ```
