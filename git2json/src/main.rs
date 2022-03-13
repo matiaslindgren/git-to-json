@@ -3,9 +3,8 @@ use regex::{Captures, Regex};
 use std::io::BufRead;
 use std::{env, fmt, io, path, process, str};
 
-const USAGE: &'static str = concat!(
-    "usage: extract_git_log repository_path { csv | json | postgres }",
-);
+const USAGE: &'static str =
+    concat!("usage: git2json repository_path { csv | json | postgres }",);
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
