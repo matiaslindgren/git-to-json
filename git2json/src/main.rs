@@ -3,8 +3,7 @@ use regex::{Captures, Regex};
 use std::io::BufRead;
 use std::{env, fmt, io, path, process, str};
 
-const USAGE: &'static str =
-    concat!("usage: git2json repository_path { csv | json | postgres }",);
+const USAGE: &'static str = concat!("usage: git2json repository_path { csv | json | postgres }",);
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
@@ -25,13 +24,10 @@ fn main() -> Result<(), String> {
         "postgres" => to_postgres(reader, "commits"),
         x => return Err(format!("unknown output format '{}'", x)),
     };
-    lines_to_stdout(output)
-        .map_err(|err| format!("error while printing output {}", err))
+    lines_to_stdout(output).map_err(|err| format!("error while printing output {}", err))
 }
 
-fn spawn_log_reader(
-    repository: &path::Path,
-) -> Result<impl Iterator<Item = Commit>, String> {
+fn spawn_log_reader(repository: &path::Path) -> Result<impl Iterator<Item = Commit>, String> {
     let stdout = process::Command::new("git")
         .arg("-C")
         .arg(repository)
@@ -50,9 +46,7 @@ fn spawn_log_reader(
         .map(|res| res.expect("buf read error"))
         .map(|buf| String::from_utf8_lossy(&buf).trim().to_string())
         .filter(|section| !section.is_empty())
-        .map(|section| {
-            section.parse::<Commit>().expect("failed parsing section")
-        });
+        .map(|section| section.parse::<Commit>().expect("failed parsing section"));
     Ok(reader)
 }
 
@@ -114,8 +108,7 @@ impl str::FromStr for Commit {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> =
-            s.splitn(5, &[' ', '\n']).map(str::trim).collect();
+        let parts: Vec<&str> = s.splitn(5, &[' ', '\n']).map(str::trim).collect();
         let hash = parts[0].to_string();
         if hash.len() != 40 {
             return Err(format!("commit hash length {} != 40", hash.len()));
@@ -208,16 +201,13 @@ impl PostgresSchema for Commit {
             .schema()
             .iter()
             .map(|(name, pg_type)| (name.len(), pg_type.len()))
-            .reduce(|(w1, w2): (usize, usize), (l1, l2): (usize, usize)| {
-                (w1.max(l1), w2.max(l2))
-            })
+            .reduce(|(w1, w2): (usize, usize), (l1, l2): (usize, usize)| (w1.max(l1), w2.max(l2)))
             .unwrap();
         let lines: Vec<String> = self
             .schema()
             .iter()
             .map(|&(field, pg_type)| {
-                let constraint =
-                    if field == "hash" { "primary key" } else { "" };
+                let constraint = if field == "hash" { "primary key" } else { "" };
                 format!(
                     "  {:<field_width$}{:<type_width$}{}",
                     field,
@@ -236,9 +226,7 @@ impl PostgresSchema for Commit {
     }
 }
 
-fn to_csv<'a>(
-    reader: impl Iterator<Item = Commit> + 'a,
-) -> Box<dyn Iterator<Item = String> + 'a> {
+fn to_csv<'a>(reader: impl Iterator<Item = Commit> + 'a) -> Box<dyn Iterator<Item = String> + 'a> {
     let header = Commit::default().field_names();
     let header = header[..].join(",");
     let csv_lines = reader.map(|c| {
@@ -256,12 +244,8 @@ fn to_csv<'a>(
     Box::new(vec![header].into_iter().chain(csv_lines))
 }
 
-fn to_json<'a>(
-    reader: impl Iterator<Item = Commit> + 'a,
-) -> Box<dyn Iterator<Item = String> + 'a> {
-    Box::new(reader.map(|c| {
-        serde_json::to_string(&c).expect("failed converting commits to json")
-    }))
+fn to_json<'a>(reader: impl Iterator<Item = Commit> + 'a) -> Box<dyn Iterator<Item = String> + 'a> {
+    Box::new(reader.map(|c| serde_json::to_string(&c).expect("failed converting commits to json")))
 }
 
 fn to_postgres<'a>(
@@ -290,9 +274,7 @@ fn to_postgres<'a>(
     Box::new(vec![create_table].into_iter().chain(lines_insert_into))
 }
 
-fn lines_to_stdout(
-    lines: impl Iterator<Item = String>,
-) -> Result<(), io::Error> {
+fn lines_to_stdout(lines: impl Iterator<Item = String>) -> Result<(), io::Error> {
     use std::io::{ErrorKind::BrokenPipe, Write};
 
     let mut stdout = io::stdout();
