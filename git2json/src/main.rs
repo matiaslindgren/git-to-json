@@ -32,6 +32,7 @@ fn spawn_log_reader(repository: &path::Path) -> Result<impl Iterator<Item = Comm
         .arg("-C")
         .arg(repository)
         .arg("log")
+        // output one section per commit, where sections are separated by NUL
         .arg("--pretty=format:%x00%H %aI %ae %cI")
         .arg("--shortstat")
         .stdout(process::Stdio::piped())
@@ -41,9 +42,9 @@ fn spawn_log_reader(repository: &path::Path) -> Result<impl Iterator<Item = Comm
         .take()
         .ok_or(format!("failed to take stdout from git process"))?;
     let reader = io::BufReader::new(stdout)
+        // split sections separated by NUL
         .split(0u8)
-        // maybe Iterator<Item = Result<Commit, Err>> instead of expect?
-        .map(|res| res.expect("buf read error"))
+        .map(|res| res.expect("failed reading stdout buffer"))
         .map(|buf| String::from_utf8_lossy(&buf).trim().to_string())
         .filter(|section| !section.is_empty())
         .map(|section| section.parse::<Commit>().expect("failed parsing section"));
